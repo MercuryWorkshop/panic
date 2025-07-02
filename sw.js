@@ -23,9 +23,13 @@ export function rewriteHtml(html, url) {
   const handler = new DomHandler((err, dom) => dom);
   const parser = new Parser(handler);
 
+  let meta = {
+    url: new URL(url),
+  };
+
   parser.write(html);
   parser.end();
-  traverseParsedHtml(handler.root);
+  traverseParsedHtml(handler.root, meta);
 
   function findhead(node) {
     if (node.type === ElementType.Tag && node.name === "head") {
@@ -69,79 +73,81 @@ export function rewriteHtml(html, url) {
 }
 
 const htmlRules = [
+  {
+    fn: (value, meta) => {
+      return rewriteUrl(value, meta);
+    },
+    // url rewrites
+    src: ["embed", "img", "image", "iframe", "source", "input", "track"],
+    href: ["a", "link", "area", "use"],
+    data: ["object"],
+    action: ["form"],
+    formaction: ["button", "input", "textarea", "submit"],
+    poster: ["video"],
+    "xlink:href": ["image"],
+  },
+  {
+    fn: (value, meta) => {
+      if (value.startsWith("blob:")) {
+        // for media elements specifically they must take the original blob
+        // because they can't be fetch'd
+        return unrewriteBlob(value);
+      }
+      return 
+      rewriteUrl(value, meta);
+    },
+    src: ["video", "audio"],
+  },
+  {
+    fn: () => null,
+    // csp stuff that must be deleted
+    nonce: "*",
+    crossorigin: "*",
+    integrity: ["script", "link"],
+    csp: ["iframe"],
+  },
+  {
+    fn: (value, meta) => rewriteSrcset(value, meta),
+    // srcset
+    srcset: ["img", "source"],
+    srcSet: ["img", "source"],
+    imagesrcset: ["link"],
+  },
+  {
+    fn: (value, meta, cookieStore) =>
+      rewriteHtml(
+        value,
+        cookieStore,
+        {
+          // for srcdoc origin is the origin of the page that the iframe is on. base and path get dropped
+          origin: new URL(meta.origin.origin),
+          base: new URL(meta.origin.origin),
+        },
+        true,
+      ),
+    // srcdoc
+    srcdoc: ["iframe"],
+  },
   // {
-  // 	fn: (value: string, meta: URLMeta) => {
-  // 		return rewriteUrl(value, meta);
-  // 	},
-  // 	// url rewrites
-  // 	src: ["embed", "img", "image", "iframe", "source", "input", "track"],
-  // 	href: ["a", "link", "area", "use"],
-  // 	data: ["object"],
-  // 	action: ["form"],
-  // 	formaction: ["button", "input", "textarea", "submit"],
-  // 	poster: ["video"],
-  // 	"xlink:href": ["image"],
+  //   fn: (value, meta) => rewriteCss(value, meta),
+  //   style: "*",
   // },
-  // {
-  // 	fn: (value: string, meta: URLMeta) => {
-  // 		if (value.startsWith("blob:")) {
-  // 			// for media elements specifically they must take the original blob
-  // 			// because they can't be fetch'd
-  // 			return unrewriteBlob(value);
-  // 		}
-  // 		return rewriteUrl(value, meta);
-  // 	},
-  // 	src: ["video", "audio"],
-  // },
-  // {
-  // 	fn: () => null,
-  // 	// csp stuff that must be deleted
-  // 	nonce: "*",
-  // 	crossorigin: "*",
-  // 	integrity: ["script", "link"],
-  // 	csp: ["iframe"],
-  // },
-  // {
-  // 	fn: (value: string, meta: URLMeta) => rewriteSrcset(value, meta),
-  // 	// srcset
-  // 	srcset: ["img", "source"],
-  // 	srcSet: ["img", "source"],
-  // 	imagesrcset: ["link"],
-  // },
-  // {
-  // 	fn: (value: string, meta: URLMeta, cookieStore: CookieStore) =>
-  // 		rewriteHtml(
-  // 			value,
-  // 			cookieStore,
-  // 			{
-  // 				// for srcdoc origin is the origin of the page that the iframe is on. base and path get dropped
-  // 				origin: new URL(meta.origin.origin),
-  // 				base: new URL(meta.origin.origin),
-  // 			},
-  // 			true
-  // 		),
-  // 	// srcdoc
-  // 	srcdoc: ["iframe"],
-  // },
-  // {
-  // 	fn: (value, meta) => rewriteCss(value, meta),
-  // 	style: "*",
-  // },
-  // {
-  // 	fn: (value) => {
-  // 		if (["_parent", "_top", "_unfencedTop"].includes(value)) return "_self";
-  // 	},
-  // 	target: ["a", "base"],
-  // },
+  {
+    fn: (value) => {
+      if (["_parent", "_top", "_unfencedTop"].includes(value)) return "_self";
+    },
+    target: ["a", "base"],
+  },
 ];
 
 // i need to add the attributes in during rewriting
 
-function traverseParsedHtml(node) {
-  if (node.name === "base" && node.attribs.href !== undefined) {
-    meta.base = new URL(node.attribs.href, meta.origin);
-  }
+function rewriteUrl(url, meta) {
+  if (typeof url === "string") url = new URL(url, meta.url);
+  return `${location.protocol}//${location.host}/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}${url.hash}`;
+}
 
+function traverseParsedHtml(node, meta) {
   if (node.attribs)
     for (const rule of htmlRules) {
       for (const attr in rule) {
@@ -166,32 +172,31 @@ function traverseParsedHtml(node) {
   // if (node.name === "style" && node.children[0] !== undefined)
   //   node.children[0].data = rewriteCss(node.children[0].data, meta);
 
-  // if (
-  //   node.name === "script" &&
-  //   /(application|text)\/javascript|module|importmap|undefined/.test(
-  //     node.attribs.type,
-  //   )
-  // ) {
-  //   if (node.children[0] !== undefined) {
-  //     let js = node.children[0].data;
-  //     // node.attribs["data-scramjet-script-source-src"] = bytesToBase64(
-  //     //   new TextEncoder().encode(js),
-  //     // );
-  //     const htmlcomment = /<!--[\s\S]*?-->/g;
-  //     js = js.replace(htmlcomment, "");
-  //     node.children[0].data = rewriteJs(
-  //       js,
-  //       node.attribs["type"] === "module",
-  //       meta,
-  //     );
-  //   } else if (node.attribs["src"]) {
-  //     let url = rewriteUrl(node.attribs["src"], meta);
-  //     if (node.attribs["type"] === "module") url += "?type=module";
+  if (
+    node.name === "script" &&
+    /(application|text)\/javascript|module|importmap|undefined/.test(
+      node.attribs.type,
+    )
+  ) {
+    if (node.children[0] !== undefined) {
+      let js = node.children[0].data;
+      // node.attribs["data-scramjet-script-source-src"] = bytesToBase64(
+      //   new TextEncoder().encode(js),
+      // );
+      // const htmlcomment = /<!--[\s\S]*?-->/g;
+      // js = js.replace(htmlcomment, "");
+      // node.children[0].data = rewriteJs(
+      //   js,
+      //   node.attribs["type"] === "module",
+      //   meta,
+      // );
+    } else if (node.attribs["src"]) {
+      let url = rewriteUrl(node.attribs["src"], meta);
 
-  //     node.attribs["data-scramjet-src"] = node.attribs["src"];
-  //     node.attribs["src"] = url;
-  //   }
-  // }
+      node.attribs["data-scramjet-src"] = node.attribs["src"];
+      node.attribs["src"] = url;
+    }
+  }
 
   if (node.name === "meta" && node.attribs["http-equiv"] != undefined) {
     if (
@@ -213,6 +218,7 @@ function traverseParsedHtml(node) {
     for (const childNode in node.childNodes) {
       node.childNodes[childNode] = traverseParsedHtml(
         node.childNodes[childNode],
+        meta,
       );
     }
   }
@@ -227,7 +233,7 @@ export function rewriteSrcset(srcset, meta) {
   if (!sufixes) return "";
   const rewrittenUrls = urls.map((url, i) => {
     if (url && sufixes[i]) {
-      return rewriteUrl(url, meta) + sufixes[i];
+      return rewriteUrl(url) + sufixes[i];
     }
   });
 
@@ -250,6 +256,14 @@ async function handleRequest(url, request) {
       console.log("REWROTE HTML");
     }
   }
+  if (request.destination == "script") {
+    let bodyText = await response.text();
+    newbody = `
+pan_eval((function(){
+${bodyText}
+}).toString().slice(12, -2), "");
+      `;
+  }
 
   return new Response(newbody, {
     status: response.status,
@@ -262,13 +276,16 @@ self.addEventListener("fetch", (event) => {
   console.log(event);
   let url = new URL(event.request.url);
 
-  if (url.pathname != "/") {
-    let [_, proto, rest] = url.pathname.split("/", 3);
-    if (!rest || !proto) throw new Error("Invalid URL format??");
-    if (proto != "https" && proto != "http" && proto != "wss")
-      throw new Error("Invalid URL protocol??");
-    let rawurl = new URL(`${proto}://${rest}${url.search}${url.hash}`);
+  if (url.pathname == "/global-protect/vpn-js/pan_js_all_260s.js")
+    return event.respondWith(fetch("/pan_js_all_260s.js"));
+  if (url.pathname == "/" || url.pathname == "/pan_js_all_260s.js") return;
 
-    event.respondWith(handleRequest(rawurl, event.request));
-  }
+  let [_, proto, ...rest] = url.pathname.split("/");
+  if (!rest || !proto) throw new Error("Invalid URL format??");
+  if (proto != "https" && proto != "http" && proto != "wss")
+    throw new Error("Invalid URL protocol??");
+  let rawurl = new URL(`${proto}://${rest.join("/")}${url.search}${url.hash}`);
+  console.log("RAWURL " + rawurl.href);
+
+  event.respondWith(handleRequest(rawurl, event.request));
 });

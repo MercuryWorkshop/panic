@@ -1,6 +1,10 @@
 <h1>PANic</h1>
 
 <script>
+    function rewriteUrl(url, meta) {
+        if (typeof url === "string") url = new URL(url);
+        return `${location.protocol}//${location.host}/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}${url.hash}`;
+    }
     navigator.serviceWorker
         .register("sw.js", { type: "module" })
         .then(function (registration) {
@@ -10,3 +14,6 @@
             );
         });
 </script>
+
+<input id="input" />
+<button onclick="window.open(rewriteUrl(input.value))">go</button>
