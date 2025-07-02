@@ -62,8 +62,23 @@ ${bodyText}
 }
 
 self.addEventListener("fetch", (event) => {
-  console.log(event);
+  console.log(event.request.url);
   let url = new URL(event.request.url);
+
+  if (url.pathname == "/global-protect/vpn/") {
+    let method = url.searchParams.get("method");
+    let host = url.searchParams.get("host");
+    let scheme = url.searchParams.get("scheme");
+    let path = url.searchParams.get("path");
+    if (!method || !host || !scheme || !path) {
+      throw new Error("'vpn' Invalid URL parameters??");
+    }
+
+    let rawurl = new URL(`${scheme}://${host}${path}${url.search}${url.hash}`);
+    console.log("RAWURL 'vpn' " + rawurl.href);
+
+    event.respondWith(client.fetch(rawurl, event.request));
+  }
 
   if (url.pathname == "/global-protect/vpn-js/pan_js_all_260s.js")
     return event.respondWith(fetch("/pan_js_all_260s.js"));
@@ -114,9 +129,9 @@ export function rewriteHtml(html, url) {
   let injected = `var _gp_enc_ck_name = "1";
           var __pan_gp_hostname_data = "${location.hostname}";
           var __pan_gp_protocol_data = "${location.protocol}";
-          var __pan_gp_protocol_host = "${location.protocol}//${location.hostname}";
+          var __pan_gp_protocol_host = "${location.protocol}//${location.host}";
           var __pan_app_hostname_data = "${url.hostname}";
-          var __pan_app_protocol_data = "${url.protocol}";
+          var __pan_app_protocol_data = "${url.protocol.slice(0, -1)}";
           var __pan_app_port_data = "0";
           var __pan_advanced_mode = "0";
           var __pan_n_url_directory = "0";
@@ -128,6 +143,19 @@ export function rewriteHtml(html, url) {
       src: "data:application/javascript;base64," + btoa(injected),
     }),
     new Element("script", { src: "/pan_js_all_260s.js" }),
+    new Element("script", {
+      src:
+        "data:application/javascript;base64," +
+        btoa(`
+        window.pan_get_cookie = function() {
+        console.log("cookies asked for");
+        return "";
+        }
+        window.pan_set_cookie = function(value) {
+          console.log("cookies set to", value);
+        }
+        `),
+    }),
   );
 
   return render(handler.root);
