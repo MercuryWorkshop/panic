@@ -19,6 +19,67 @@ async function instantiate() {
 }
 instantiate();
 
+function rewriteUrl(url, meta) {
+  if (typeof url === "string") url = new URL(url, meta.url);
+  return `${location.protocol}//${location.host}/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}${url.hash}`;
+}
+
+async function handleRequest(url, request) {
+  let response = await client.fetch(url, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+  });
+  console.log(response);
+  let newbody = response.body;
+  let newheaders = {};
+  for (const [key, value] of response.headers.entries()) {
+    if (cspHeaders.includes(key.toLowerCase())) continue;
+    newheaders[key] = value;
+  }
+
+  if (request.destination == "document" || request.destination == "iframe") {
+    if (response.headers.get("content-type")?.startsWith("text/html")) {
+      let bodyText = await response.text();
+      newbody = rewriteHtml(bodyText, url);
+      console.log("REWROTE HTML");
+    }
+  }
+  if (request.destination == "script") {
+    let bodyText = await response.text();
+    newbody = `
+pan_eval((function(){
+${bodyText}
+}).toString().slice(12, -2), "");
+      `;
+  }
+
+  return new Response(newbody, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newheaders,
+  });
+}
+
+self.addEventListener("fetch", (event) => {
+  console.log(event);
+  let url = new URL(event.request.url);
+
+  if (url.pathname == "/global-protect/vpn-js/pan_js_all_260s.js")
+    return event.respondWith(fetch("/pan_js_all_260s.js"));
+  if (url.pathname == "/" || url.pathname == "/pan_js_all_260s.js") return;
+
+  let [_, proto, ...rest] = url.pathname.split("/");
+  if (!rest || !proto) throw new Error("Invalid URL format??");
+  if (proto == "https:") proto = "https";
+  if (proto != "https" && proto != "http" && proto != "wss")
+    throw new Error("Invalid URL protocol??");
+  let rawurl = new URL(`${proto}://${rest.join("/")}${url.search}${url.hash}`);
+  console.log("RAWURL " + rawurl.href);
+
+  event.respondWith(handleRequest(rawurl, event.request));
+});
+
 export function rewriteHtml(html, url) {
   const handler = new DomHandler((err, dom) => dom);
   const parser = new Parser(handler);
@@ -72,6 +133,28 @@ export function rewriteHtml(html, url) {
   return render(handler.root);
 }
 
+const cspHeaders = [
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "expect-ct",
+  "feature-policy",
+  "origin-isolation",
+  "strict-transport-security",
+  "upgrade-insecure-requests",
+  "x-content-type-options",
+  "x-download-options",
+  "x-frame-options",
+  "x-permitted-cross-domain-policies",
+  "x-powered-by",
+  "x-xss-protection",
+  // This needs to be emulated, but for right now it isn't that important of a feature to be worried about
+  // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Clear-Site-Data
+  "clear-site-data",
+];
+
 const htmlRules = [
   {
     fn: (value, meta) => {
@@ -93,7 +176,7 @@ const htmlRules = [
         // because they can't be fetch'd
         return unrewriteBlob(value);
       }
-      return 
+      return;
       rewriteUrl(value, meta);
     },
     src: ["video", "audio"],
@@ -141,11 +224,6 @@ const htmlRules = [
 ];
 
 // i need to add the attributes in during rewriting
-
-function rewriteUrl(url, meta) {
-  if (typeof url === "string") url = new URL(url, meta.url);
-  return `${location.protocol}//${location.host}/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}${url.hash}`;
-}
 
 function traverseParsedHtml(node, meta) {
   if (node.attribs)
@@ -239,53 +317,3 @@ export function rewriteSrcset(srcset, meta) {
 
   return rewrittenUrls.join("");
 }
-
-async function handleRequest(url, request) {
-  let response = await client.fetch(url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-  });
-  console.log(response);
-  let newbody = response.body;
-
-  if (request.destination == "document" || request.destination == "iframe") {
-    if (response.headers.get("content-type")?.startsWith("text/html")) {
-      let bodyText = await response.text();
-      newbody = rewriteHtml(bodyText, url);
-      console.log("REWROTE HTML");
-    }
-  }
-  if (request.destination == "script") {
-    let bodyText = await response.text();
-    newbody = `
-pan_eval((function(){
-${bodyText}
-}).toString().slice(12, -2), "");
-      `;
-  }
-
-  return new Response(newbody, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-}
-
-self.addEventListener("fetch", (event) => {
-  console.log(event);
-  let url = new URL(event.request.url);
-
-  if (url.pathname == "/global-protect/vpn-js/pan_js_all_260s.js")
-    return event.respondWith(fetch("/pan_js_all_260s.js"));
-  if (url.pathname == "/" || url.pathname == "/pan_js_all_260s.js") return;
-
-  let [_, proto, ...rest] = url.pathname.split("/");
-  if (!rest || !proto) throw new Error("Invalid URL format??");
-  if (proto != "https" && proto != "http" && proto != "wss")
-    throw new Error("Invalid URL protocol??");
-  let rawurl = new URL(`${proto}://${rest.join("/")}${url.search}${url.hash}`);
-  console.log("RAWURL " + rawurl.href);
-
-  event.respondWith(handleRequest(rawurl, event.request));
-});
