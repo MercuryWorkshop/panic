@@ -1,0 +1,12 @@
+<h1>PANic</h1>
+
+<script>
+    navigator.serviceWorker
+        .register("sw.js", { type: "module" })
+        .then(function (registration) {
+            console.log(
+                "ServiceWorker registration successful with scope: ",
+                registration.scope,
+            );
+        });
+</script>
