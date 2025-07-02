@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"lib": ["deno.window"],
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"jsx": "precompile",
+		"jsxImportSource": "hono/jsx",
+		"strict": true,
+		"noEmit": true
+	}
+}

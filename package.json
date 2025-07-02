@@ -1,0 +1,24 @@
+{
+	"name": "@mercuryworkshop/panic",
+	"version": "0.0.1",
+	"type": "module",
+	"scripts": {
+		"build": "NODE_OPTIONS='--experimental-transform-types' rsbuild build",
+		"check": "biome check --write",
+		"dev": "rsbuild dev --open",
+		"format": "biome format --write",
+		"preview": "NODE_OPTIONS='--experimental-transform-types' rsbuild preview"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.0.0",
+		"@rsbuild/core": "^1.4.3",
+		"@rspack/binding-darwin-x64": "^1.4.2",
+		"@types/node": "^24.0.10",
+		"typescript": "^5.8.3"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1.15.0",
+		"@rspack/cli": "^1.4.2",
+		"hono": "^4.8.3"
+	}
+}

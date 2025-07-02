@@ -6,7 +6,7 @@
         return `${location.protocol}//${location.host}/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}${url.hash}`;
     }
     navigator.serviceWorker
-        .register("sw.js", { type: "module" })
+        .register("/{{ PANIC_PATH }}/sw.panic.js", { type: "module" })
         .then(function (registration) {
             console.log(
                 "ServiceWorker registration successful with scope: ",

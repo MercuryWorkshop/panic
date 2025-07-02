@@ -1,0 +1,39 @@
+{
+	"formatter": {
+		"external": {
+			"command": "biome",
+			"arguments": ["format", "--stdin-file-path", "{buffer_path}"]
+		}
+	},
+	"format_on_save": "on",
+	"tab_size": 4,
+	"languages": {
+		"TypeScript": {
+			"language_servers": ["typescript-language-server", "deno", "!vtsls", "..."]
+		},
+		"TSX": {
+			"language_servers": ["typescript-language-server", "deno", "!vtsls", "..."]
+		},
+		"JavaScript": {
+			"language_servers": ["typescript-language-server", "deno", "!vtsls", "..."]
+		}
+	},
+	"lsp": {
+		"typescript-language-server": {
+			"initialization_options": {
+				"preferences": {
+					"includeInlayParameterNameHints": "all"
+				}
+			}
+		},
+		"deno": {
+			"settings": {
+				"deno": {
+					"enable": true,
+					"enablePaths": ["./demo"],
+					"unstable": true
+				}
+			}
+		}
+	}
+}
