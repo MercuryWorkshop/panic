@@ -5,7 +5,14 @@ import render from "dom-serializer";
 import { readFile } from "fs/promises";
 import parse from "set-cookie-parser";
 import { fetch } from "undici";
+import swc from "@swc/core";
+import babel from "@babel/core";
 
+const PAN_PATH = "/global-protect/vpn-js/";
+const PAN_BUNDLE = "pan_js_all_260s.js";
+const PORT = 8080;
+const HOST = "0.0.0.0";
+// MODIFY THIS TO WHERE YOU'RE RUNNING IT
 let location = new URL("http://localhost:8080/");
 
 async function handleResponse(req, res, body, rawurl, realorigin) {
@@ -29,6 +36,7 @@ async function handleResponse(req, res, body, rawurl, realorigin) {
         newreqheaders[key] = value;
       }
     }
+    newreqheaders["cookie"] = cookiestore.getCookies(rawurl, false);
     let response = await fetch(rawurl, {
       method: req.method,
       headers: newreqheaders,
@@ -79,11 +87,7 @@ async function handleResponse(req, res, body, rawurl, realorigin) {
 
     if (req.headers["sec-fetch-dest"] === "script") {
       let bodyText = await response.text();
-      newbody = `
-  pan_eval((function(){
-  ${bodyText}
-  }).toString().slice(12, -2), "");
-        `;
+      newbody = rewriteJs(bodyText);
     }
 
     if (newbody instanceof ReadableStream) {
@@ -100,9 +104,14 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname == "/") {
       res.setHeader("Content-Type", "text/html");
       res.end(
-        await readFile("./index.html", {
-          encoding: "utf-8",
-        }),
+        `<h1>PANic</h1>
+        <a href="https://github.com/MercuryWorkshop/panic">experimental web proxy</a><br>
+        <script>
+        ${rewriteUrl.toString()}
+        </script>
+        <input id="input" />
+        <button onclick="window.open(rewriteUrl(input.value, {url: location}))">go</button>
+        `,
       );
       return;
     }
@@ -132,10 +141,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname == "/global-protect/vpn-js/pan_js_all_260s.js") {
+    if (url.pathname == `${PAN_PATH}${PAN_BUNDLE}`) {
       res.setHeader("Content-Type", "application/javascript");
       res.end(
-        await readFile("./pan_js_all_260s.js", {
+        await readFile(`./${PAN_BUNDLE}`, {
           encoding: "utf-8",
         }),
       );
@@ -157,7 +166,6 @@ const server = http.createServer(async (req, res) => {
     let realorigin;
     for (const param of url.searchParams) {
       if (param[0].startsWith("gp-1")) {
-        console.log(param[0]);
         rawurl.searchParams.delete(param[0]);
         if (param[0].startsWith("gp-1-o2-")) {
           realorigin = param[0].slice(8);
@@ -182,9 +190,20 @@ const server = http.createServer(async (req, res) => {
     res.end("Internal Server Error (pan)");
   }
 });
-server.listen(8080, "localhost", () => {
+server.listen(8080, "0.0.0.0", () => {
   console.log("Listening");
 });
+
+//
+// rewriter logic below
+// mostly ripped from scramjet
+//
+
+function rewriteJs(text) {
+  return `pan_eval((function(){
+  ${text}
+  }).toString().slice(12, -2), "");`;
+}
 
 function rewriteUrl(url, meta) {
   if (typeof url === "string") url = new URL(url, meta.url);
@@ -219,11 +238,10 @@ function rewriteCss(css, meta) {
       ),
     );
   });
-
   return css;
 }
 
-export function rewriteHtml(html, url) {
+function rewriteHtml(html, url) {
   const handler = new DomHandler((err, dom) => dom);
   const parser = new Parser(handler);
 
@@ -233,7 +251,7 @@ export function rewriteHtml(html, url) {
 
   parser.write(html);
   parser.end();
-  traverseParsedHtml(handler.root, meta);
+  traverseHtml(handler.root, meta);
 
   function findhead(node) {
     if (node.type === ElementType.Tag && node.name === "head") {
@@ -278,14 +296,7 @@ export function rewriteHtml(html, url) {
     new Element("script", {
       src: "data:application/javascript;base64," + btoa(injected),
     }),
-    new Element("script", { src: "/global-protect/vpn-js/pan_js_all_260s.js" }),
-    new Element("script", {
-      src:
-        "data:application/javascript;base64," +
-        btoa(`
-
-        `),
-    }),
+    new Element("script", { src: `${PAN_PATH}${PAN_BUNDLE}` }),
   );
 
   return render(handler.root);
@@ -308,8 +319,6 @@ const cspHeaders = [
   "x-permitted-cross-domain-policies",
   "x-powered-by",
   "x-xss-protection",
-  // This needs to be emulated, but for right now it isn't that important of a feature to be worried about
-  // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Clear-Site-Data
   "clear-site-data",
 
   "content-encoding",
@@ -327,10 +336,7 @@ const cspHeaders = [
 
 const htmlRules = [
   {
-    fn: (value, meta) => {
-      return rewriteUrl(value, meta);
-    },
-    // url rewrites
+    fn: (value, meta) => rewriteUrl(value, meta),
     src: ["embed", "img", "image", "iframe", "source", "input", "track"],
     href: ["a", "link", "area", "use"],
     data: ["object"],
@@ -340,20 +346,11 @@ const htmlRules = [
     "xlink:href": ["image"],
   },
   {
-    fn: (value, meta) => {
-      if (value.startsWith("blob:")) {
-        // for media elements specifically they must take the original blob
-        // because they can't be fetch'd
-        return unrewriteBlob(value);
-      }
-      return;
-      rewriteUrl(value, meta);
-    },
+    fn: (value, meta) => rewriteUrl(value, meta),
     src: ["video", "audio"],
   },
   {
     fn: () => null,
-    // csp stuff that must be deleted
     nonce: "*",
     crossorigin: "*",
     integrity: ["script", "link"],
@@ -361,25 +358,9 @@ const htmlRules = [
   },
   {
     fn: (value, meta) => rewriteSrcset(value, meta),
-    // srcset
     srcset: ["img", "source"],
     srcSet: ["img", "source"],
     imagesrcset: ["link"],
-  },
-  {
-    fn: (value, meta, cookieStore) =>
-      rewriteHtml(
-        value,
-        cookieStore,
-        {
-          // for srcdoc origin is the origin of the page that the iframe is on. base and path get dropped
-          origin: new URL(meta.origin.origin),
-          base: new URL(meta.origin.origin),
-        },
-        true,
-      ),
-    // srcdoc
-    srcdoc: ["iframe"],
   },
   {
     fn: (value, meta) => rewriteCss(value, meta),
@@ -393,55 +374,41 @@ const htmlRules = [
   },
 ];
 
-// i need to add the attributes in during rewriting
-
-function traverseParsedHtml(node, meta) {
+function traverseHtml(node, meta) {
   if (node.attribs)
     for (const rule of htmlRules) {
       for (const attr in rule) {
         const sel = rule[attr];
         if (typeof sel === "function") continue;
-
         if (sel === "*" || sel.includes(node.name)) {
           if (node.attribs[attr] !== undefined) {
             const value = node.attribs[attr];
             const v = rule.fn(value, meta, null);
-
             if (v === null) delete node.attribs[attr];
             else {
               node.attribs[attr] = v;
             }
-            node.attribs[`data-scramjet-${attr}`] = value;
           }
         }
       }
     }
-
-  // if (node.name === "style" && node.children[0] !== undefined)
-  //   node.children[0].data = rewriteCss(node.children[0].data, meta);
-
+  if (node.name === "base")
+    node.attribs.href = rewriteUrl(node.attribs.href, meta);
+  if (node.name === "style" && node.children[0] !== undefined)
+    node.children[0].data = rewriteCss(node.children[0].data, meta);
   if (
     node.name === "script" &&
     /(application|text)\/javascript|module|importmap|undefined/.test(
       node.attribs.type,
     )
   ) {
-    if (node.attribs.type == "module") {
-      node.attribs.type = "disabled";
-    }
-    if ("nomodule" in node.attribs) {
-      // we don't support modules
-      delete node.attribs.nomodule;
-    }
+    if (node.attribs.type == "module") node.attribs.type = "disabled";
+    if ("nomodule" in node.attribs) delete node.attribs.nomodule;
     if (node.children[0] !== undefined) {
       let js = node.children[0].data;
-      // const htmlcomment = /<!--[\s\S]*?-->/g;
-      // js = js.replace(htmlcomment, "");
-      // node.children[0].data = rewriteJs(
-      //   js,
-      //   node.attribs["type"] === "module",
-      //   meta,
-      // );
+      const htmlcomment = /<!--[\s\S]*?-->/g;
+      js = js.replace(htmlcomment, "");
+      node.children[0].data = rewriteJs(js);
     } else if (node.attribs["src"]) {
       let url = rewriteUrl(node.attribs["src"], meta);
       node.attribs["src"] = url;
@@ -464,19 +431,16 @@ function traverseParsedHtml(node, meta) {
     }
   }
 
-  if (node.childNodes) {
-    for (const childNode in node.childNodes) {
-      node.childNodes[childNode] = traverseParsedHtml(
+  if (node.childNodes)
+    for (const childNode in node.childNodes)
+      node.childNodes[childNode] = traverseHtml(
         node.childNodes[childNode],
         meta,
       );
-    }
-  }
-
   return node;
 }
 
-export function rewriteSrcset(srcset, meta) {
+function rewriteSrcset(srcset, meta) {
   const urls = srcset.split(/ [0-9]+x,? ?/g);
   if (!urls) return "";
   const sufixes = srcset.match(/ [0-9]+x,? ?/g);
@@ -490,7 +454,7 @@ export function rewriteSrcset(srcset, meta) {
   return rewrittenUrls.join("");
 }
 
-export class CookieStore {
+class CookieStore {
   cookies = {};
 
   setCookies(cookies, url) {
@@ -552,5 +516,4 @@ export class CookieStore {
     return JSON.stringify(this.cookies);
   }
 }
-
 let cookiestore = new CookieStore();
